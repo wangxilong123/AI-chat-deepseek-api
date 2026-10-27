@@ -43,6 +43,7 @@ class ChatService {
    * @returns {Object|null} 会话信息或 null
    */
   async getSession(id) {
+    console.log(id)
     const [rows] = await pool.query('SELECT * FROM sessions WHERE id = ?', [id])
     return rows[0] || null
   }
@@ -72,10 +73,16 @@ class ChatService {
    * @returns {Array} 消息数组，按时间正序
    */
   async getMessages(sessionId) {
+    console.log('【调试】查询消息，接收到的 sessionId:', sessionId)
+    
     const [rows] = await pool.query(
       'SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC',
       [sessionId]
     )
+    
+    console.log('【调试】SQL 查询结果行数:', rows.length)
+    console.log('【调试】SQL 查询结果:', rows)
+    
     return rows
   }
 

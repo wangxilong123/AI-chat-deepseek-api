@@ -159,7 +159,9 @@ router.post('/sessions/:id/chat/stream', async (req, res) => {
               fullReply += content
               res.write(`data: ${JSON.stringify({ content })}\n\n`)
             }
-          } catch (e) {}
+          } catch (e) {
+            console.error('JSON parse error:', e)
+          }
         }
       }
     }
@@ -169,7 +171,10 @@ router.post('/sessions/:id/chat/stream', async (req, res) => {
     }
     res.end()
   } catch (error) {
-    res.status(500).json({ error: error.message })
+    console.error('Stream error:', error)
+    // 发送错误消息给客户端
+    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`)
+    res.end()
   }
 })
 
