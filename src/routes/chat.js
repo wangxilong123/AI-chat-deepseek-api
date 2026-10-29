@@ -1,7 +1,11 @@
 // 引入 Express 路由
 const express = require('express')
+const { Readable } = require('node:stream')
 const pool = require('../db')
 const { API_KEY, MODEL, TEMPERATURE, MAX_TOKENS } = require('../config')
+
+// 引入 SSE 增量解析器
+const { createSSEParser } = require('../lib/sse')
 
 // 引入对话服务
 const { ChatService } = require('../services/chat-service')
@@ -134,37 +138,34 @@ router.post('/sessions/:id/chat/stream', async (req, res) => {
     res.setHeader('Connection', 'keep-alive')
     res.flushHeaders()
 
-    const reader = stream.getReader()
     const decoder = new TextDecoder()
     let fullReply = ''
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      const chunk = decoder.decode(value, { stream: true })
-      const lines = chunk.split('\n')
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6)
-          if (data === '[DONE]') {
-            res.write('data: [DONE]\n\n')
-            continue
-          }
-          try {
-            const parsed = JSON.parse(data)
-            const content = parsed.choices?.[0]?.delta?.content
-            if (content) {
-              fullReply += content
-              res.write(`data: ${JSON.stringify({ content })}\n\n`)
-            }
-          } catch (e) {
-            console.error('JSON parse error:', e)
-          }
-        }
+    // 按 \n\n 切事件，避免上游 data 行被网络分片切断后解析失败、丢掉这段 delta
+    const parser = createSSEParser((payload) => {
+      if (payload === '[DONE]') {
+        res.write('data: [DONE]\n\n')
+        return
       }
+      try {
+        const parsed = JSON.parse(payload)
+        const content = parsed.choices?.[0]?.delta?.content
+        if (content) {
+          fullReply += content
+          res.write(`data: ${JSON.stringify({ content })}\n\n`)
+        }
+      } catch (e) {
+        console.error('SSE 数据解析失败，原文前 200 字：', payload.slice(0, 200))
+      }
+    })
+
+    for await (const chunk of Readable.fromWeb(stream)) {
+      parser.push(decoder.decode(chunk, { stream: true }))
     }
+    // 收尾：把解码器里残留的不完整多字节字符吐出来（中文跨分片时会卡在这）
+    parser.push(decoder.decode())
+    parser.end()
+
     // 保存助手回复到数据库
     if (fullReply) {
       await chatService.saveMessage(sessionId, 'assistant', fullReply)
